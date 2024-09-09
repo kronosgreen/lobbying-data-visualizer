@@ -1,24 +1,58 @@
 <template>
   <div>
-    <p>There are {{ data?.firmsAggregate?.count || 0 }} firms.</p>
-    <ClientOnly>
-      <GraphPanel style="width: 100%; height: 500px;"/>
-    </ClientOnly>
+    <NuxtLayout>
+      <div class="justify-center my-8">
+        <p>There are {{ data?.firms?.length || 0 }} firms that have spent at least ${{  MIN_SPENT }}.</p>
+      </div>
+      <Graph style="width: 100%; height: 800px;" v-bind:query_data="data"/>
+    </NuxtLayout>
   </div>
 </template>
 
 <script lang="ts" setup>
 
 const query = gql`
-query numFirms {
-    firmsAggregate {
-        count
+query TopSpendingFirms($fw: FirmWhere) {
+  firms(where: $fw) {
+    Name
+    lobbyingRecordsAggregate {
+      node {
+        Amount {
+          sum
+        }
+      }
     }
+    categories {
+      Name
+      industry {
+        Name
+      }
+    }
+    worked {
+      Name
+    }
+  }
+  industries {
+    Name
+    categories {
+      firmsAggregate {
+        count
+      }
+    }
+  }
 }`
 
-// const variables = { limit: 5 }
-const variables = {}
+var MIN_SPENT: number  =  20000000.0;
+const variables = {
+  "fw": {
+    "lobbyingRecordsAggregate": {
+      "node": {
+        "Amount_SUM_GT": MIN_SPENT
+      }
+    }
+  }
+}
 
-const { data } = await useAsyncQuery(query, variables)
+const { data }: any = await useAsyncQuery(query, variables)
 
 </script>
