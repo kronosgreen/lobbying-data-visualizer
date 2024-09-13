@@ -23,26 +23,22 @@ query TopSpendingFirms($fw: FirmWhere) {
       }
     }
     categories {
-      Name
       industry {
-        Name
+        sector {
+          Name
+        }
       }
     }
-    worked {
+    board {
       Name
     }
   }
-  industries {
+  sectors {
     Name
-    categories {
-      firmsAggregate {
-        count
-      }
-    }
   }
 }`
 
-var MIN_SPENT: number  =  20000000.0;
+var MIN_SPENT: number  =  10000000.0;
 const variables = {
   "fw": {
     "lobbyingRecordsAggregate": {

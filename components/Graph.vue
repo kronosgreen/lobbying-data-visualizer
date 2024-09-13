@@ -1,7 +1,7 @@
 <template>
     <Suspense>
         <ClientOnly>
-            <Sigma :graph="graph" fallback="Loading..."/>
+            <Sigma :graph="graph" :sectorColors="sector_color" fallback="Loading..."/>
         </ClientOnly>
     </Suspense>
 </template>
@@ -21,46 +21,52 @@ const { query_data }: any = toRefs(props);
 
 const graph = new Graph();
 
-// Create industry nodes and size by no. firms
+// Define color for sector of firm
 console.log('setting up industry nodes')
-let industries: any[] = [];
-query_data.value.industries.forEach((industry: any) => {
-    let firms: number = 0;
-    industry.categories.forEach((el:any) => {firms += el.firmsAggregate.count});
-    
-    graph.addNode(industry.Name, { 
-        x: Math.random() * 100,
-        y: Math.random() * 50,
-        size: Math.sqrt(firms) * 0.5,
-        highlightLabel: industry.Name,
-        basicLabel: industry.Name,
-        label: industry.Name,
-        nodeType: "Industry",
-        status: "active",
-        color: "blue" 
-    });
+let sector_color: any = {};
+let palette: string[] = [
+    "#fd7f6f",
+    "#7eb0d5",
+    "#b2e061",
+    "#bd7ebe",
+    "#ffb55a",
+    "#ffee65",
+    "#beb9db",
+    "#fdcce5",
+    "#8bd3c7",
+    '#ffffd1',
+    '#ff9cee',
+    '#dbffd6',
+    '#85e3ff',
+    '#bffcc6',
+    '#ace7ff'
+];
+let i = 0;
+query_data.value.sectors.forEach((sector: any) => {
+    sector_color[sector.Name] = palette[i];
+    i += 1;
 });
 
-// Create node for each firm and connect to previous nodes
+// Create node for each firm along w/ people specified and connect
 console.log("setting up firm nodes and employees")
 query_data.value.firms.forEach((firm: any) => {
+    let lobbyingTotal = firm.lobbyingRecordsAggregate.node.Amount.sum;
+    let sector = firm.categories[0].industry.sector.Name;
+    
     graph.addNode(firm.Name, { 
         x: Math.random() * 100,
         y: Math.random() * 50,
-        size: Math.sqrt(firm.lobbyingRecordsAggregate.node.Amount.sum) / 1000,
-        highlightLabel: firm.Name + '\nTotal Spent: $' + firm.lobbyingRecordsAggregate.node.Amount.sum,
+        size: Math.sqrt(lobbyingTotal) / 1000,
+        highlightLabel: firm.Name + '\nTotal Spent: $' + lobbyingTotal,
         basicLabel: firm.Name,
         label: firm.Name,
         nodeType: "Firm",
         status: "active",
-        color: "red"
-    });
-    // Connecting firm to its industry
-    firm.categories.forEach((cat: any) => {
-        graph.mergeEdge(firm.Name, cat.industry.Name, { "status": "active", "size": 0.25 });
+        sector: sector,
+        color: sector_color[sector]
     });
     // Set up each employee and connect to firm
-    firm.worked.forEach((employee: any) => {
+    firm.board.forEach((employee: any) => {
         graph.mergeNode(employee.Name, {
             x: Math.random() * 100,
             y: Math.random() * 50,
@@ -81,9 +87,14 @@ console.log("Filtering employees")
 let single_employees: string[] = [];
 let empDropped: number = 0;
 graph.forEachNode((node, attributes) => {
-    if(attributes.nodeType == "Person" && graph.degree(node) <= 2) {
-        graph.dropNode(node)
-        empDropped += 1;
+    let degree = graph.degree(node);
+    if(attributes.nodeType == "Person") {
+        if(degree <= 1) {
+            graph.dropNode(node)
+            empDropped += 1;
+        } else {
+            graph.setNodeAttribute(node, "size", degree)
+        }    
     }
 })
 console.log(empDropped + " employees dropped")

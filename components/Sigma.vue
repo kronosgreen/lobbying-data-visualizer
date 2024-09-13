@@ -1,20 +1,30 @@
 <template>
-    <div id="nodegraph" style="width: 1080px; height: 800px; margin:0; padding: 0; overflow: hidden;"></div>
+    <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4" >
+
+    </div>
+    <div id="nodegraph" class="block items-center justify-between mx-auto p-4" style="height: 960px; width: 1800px"></div>
 </template>
  
 <script lang="ts">
     import Sigma from "sigma"
     import Graph from "graphology"
     import FA2Layout from 'graphology-layout-forceatlas2/worker'
+    
 
     export default {
         props: {
             graph: {
                 type: Graph,
                 required: true
+            },
+            sectorColors: {
+                type: Object,
+                required: true
             }
         },
         mounted() {
+            // Rendering Sigma.js 
+            console.log("Rendering into sigma.js graph");
             const container = document.getElementById("nodegraph") as HTMLElement;
 
             const layout = new FA2Layout(this.graph, {
@@ -33,7 +43,10 @@
             layout.start();
 
             // Render
-            const renderer = new Sigma(this.graph, container);
+            const renderer = new Sigma(this.graph, container, {
+                maxCameraRatio: 1,
+                zIndex: true
+            });
 
             // Highlight a node's network on hover
             const colors: any = {
@@ -41,12 +54,6 @@
                 "Firm": "#961919",
                 "Person": "#459b1d"
             };
-            const EDGE_FOCUS = '#444444';
-            const EDGE_IGNORE = '#b4b0ba';
-            const EDGE_NORMAL = '#b4b0ba';
-            const EDGE_SIZE_NORMAL = 0.25;
-            const EDGE_SIZE_FOCUS = 4;
-            const EDGE_SIZE_IGNORE = 0;
 
             renderer.on("enterNode", ({ node }) => {
                 // Get current node and its neighbors
@@ -64,23 +71,27 @@
                     }
                 });
                 this.graph.forEachNode((n: string, attr: any) => {
+                    let color = attr.nodeType == "Firm" ? this.sectorColors[attr.sector] : colors[attr.nodeType]
                     this.graph.setNodeAttribute(n, "color", activeNodes[n] ? 
-                        colors[attr.nodeType] : // color if in network
-                        colors[attr.nodeType] + '40' // drop opacity if not in network
+                        color : // color if in network
+                        color + '40' // drop opacity if not in network
                     );
                     this.graph.setNodeAttribute(n, "zIndex", activeNodes[n] ? 1 : -1);
                     this.graph.setNodeAttribute(n, "forceLabel", activeNodes[n] && attr.nodeType != "Person");
-                    this.graph.setNodeAttribute(n, "label", activeNodes[n] ? attr.basicLabel : '');
+                    this.graph.setNodeAttribute(n, "label", activeNodes[n] ? attr.label : '');
                 });
+                this.graph.setNodeAttribute(node, "label", this.graph.getNodeAttribute(node, "highlightLabel"))
                 this.graph.forEachEdge((edge) => {
                     this.graph.setEdgeAttribute(edge, "hidden", !activeEdges[edge]);
+                    this.graph.setEdgeAttribute(edge, "zIndex", !activeEdges[edge] ? 1 : -1);
                 })
                 renderer.refresh();
             });
 
             renderer.on("leaveNode", ({ node }) => {
                 this.graph.forEachNode((n: string, attr: any) => {
-                    this.graph.setNodeAttribute(n, "color", colors[attr.nodeType]);
+                    let color = attr.nodeType == "Firm" ? this.sectorColors[attr.sector] : colors[attr.nodeType];
+                    this.graph.setNodeAttribute(n, "color", color);
                     this.graph.setNodeAttribute(n, "zIndex", 0);
                     this.graph.setNodeAttribute(n, "forceLabel", false);
                     this.graph.setNodeAttribute(n, "label", attr.basicLabel);
@@ -93,7 +104,7 @@
 
             setTimeout(function() {
                 layout.stop();
-            }, 5000);
+            }, 10000);
         }
     }
  </script>
