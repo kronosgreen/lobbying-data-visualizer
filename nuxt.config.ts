@@ -13,5 +13,9 @@ export default defineNuxtConfig({
     }, 
   },
 
+  build: {
+    transpile: ['tslib']
+  },
+
   compatibilityDate: '2024-09-08'
 })
