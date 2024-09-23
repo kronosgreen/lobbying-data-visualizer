@@ -24,123 +24,151 @@
 <script lang="ts" setup>
 import Graph from "graphology"
 
+// Graph loading and chunking properties
 const loading = ref(true);
+const offset  = ref(0);
+const limit   = ref(1000);
 
-const query = gql`
-query TopSpendingFirms($fw: FirmWhere) {
-  firms(where: $fw) {
-    Name
-    lobbyingRecordsAggregate {
-      node {
-        Amount {
-          sum
-        }
-      }
-    }
-    categories {
-      industry {
-        sector {
-          Name
-        }
-      }
-    }
-    board {
-      Name
-    }
-  }
-  sectors {
-    Name
-  }
-}`
-
-var MIN_SPENT: number = 1000000.0;
-const variables = {
-  "fw": {
-    "lobbyingRecordsAggregate": {
-      "node": {
-        "Amount_SUM_GT": MIN_SPENT
-      }
-    }
-  }
-}
-
+// Graph object instantiation
 const graph = new Graph();
 let sector_color: any = {};
 
-useAsyncQuery(query, variables).then((results: any) => {
-    let palette: string[] = [
-        "#fd7f6f",
-        "#7eb0d5",
-        "#b2e061",
-        "#bd7ebe",
-        "#ffb55a",
-        "#ffee65",
-        "#beb9db",
-        "#fdcce5",
-        "#8bd3c7",
-        '#ffffd1',
-        '#ff9cee',
-        '#dbffd6',
-        '#85e3ff',
-        '#bffcc6',
-        '#ace7ff'
-    ];
-    let i = 0;
-    results.data._value.sectors.forEach((sector: any) => {
-        sector_color[sector.Name] = palette[i];
-        i += 1;
-    });
+// Get total number of records in database
+const { data: totalRecords } = await useAsyncQuery(gql`
+  query {
+    firmsAggregate {
+      count
+    }
+  }`);
 
-    results.data._value.firms.forEach((firm: any) => {
-        let lobbyingTotal = firm.lobbyingRecordsAggregate.node.Amount.sum;
-        let sector = firm.categories[0].industry.sector.Name;
-        
-        graph.addNode(firm.Name, { 
-            x: Math.random() * 100,
-            y: Math.random() * 50,
-            size: Math.sqrt(lobbyingTotal) / 1000,
-            highlightLabel: firm.Name + '\nTotal Spent: $' + lobbyingTotal,
-            basicLabel: firm.Name,
-            label: firm.Name,
-            nodeType: "Firm",
-            status: "active",
-            sector: sector,
-            color: sector_color[sector]
-        });
-        
-        // Set up each employee and connect to firm
-        firm.board.forEach((employee: any) => {
-            graph.mergeNode(employee.Name, {
-                x: Math.random() * 100,
-                y: Math.random() * 50,
-                size: 4,
-                highlightLabel: employee.Name,
-                basicLabel: employee.Name,
-                label: employee.Name,
-                nodeType: "Person",
-                status: "active",
-                color: "green"
-            });
-            graph.mergeEdge(firm.Name, employee.Name, { "status": "active", "size": 0.25 });
-        });
-    });
-    // Filtering out people w/ only connected to a single firm
-    console.log("Filtering people that don't connect firms")
-    let empDropped: number = 0;
-    graph.forEachNode((node, attributes) => {
-        let degree = graph.degree(node);
-        if(attributes.nodeType == "Person") {
-            if(degree <= 1) {
-                graph.dropNode(node)
-                empDropped += 1;
-            } else {
-                graph.setNodeAttribute(node, "size", degree)
-            }    
+
+// Async function to iteratively build Sigma graph
+async function fetchAndBuildGraph(offset: number, limit: number) {
+  const dataQuery = gql`
+  query TopSpendingFirms($fw: FirmWhere, $offset: Int, $limit: Int) {
+    firms(where: $fw, options: {
+        offset: $offset,
+        limit: $limit
+      }) {
+      Name
+      lobbyingRecordsAggregate {
+        node {
+          Amount {
+            sum
+          }
         }
-    })
-    console.log(empDropped + " employees dropped")
-    loading.value = false;
-});
+      }
+      categories {
+        industry {
+          sector {
+            Name
+          }
+        }
+      }
+      board {
+        Name
+      }
+    }
+    sectors {
+      Name
+    }
+  }`
+
+  var MIN_SPENT: number = 1000000.0;
+  const dataVariables = {
+    "offset": offset,
+    "limit": limit,
+    "fw": {
+      "lobbyingRecordsAggregate": {
+        "node": {
+          "Amount_SUM_GT": MIN_SPENT
+        }
+      }
+    }
+  }
+  
+  await useAsyncQuery(dataQuery, dataVariables).then((results: any) => {
+      let palette: string[] = [
+          "#fd7f6f",
+          "#7eb0d5",
+          "#b2e061",
+          "#bd7ebe",
+          "#ffb55a",
+          "#ffee65",
+          "#beb9db",
+          "#fdcce5",
+          "#8bd3c7",
+          '#ffffd1',
+          '#ff9cee',
+          '#dbffd6',
+          '#85e3ff',
+          '#bffcc6',
+          '#ace7ff'
+      ];
+      let i = 0;
+      results.data._value.sectors.forEach((sector: any) => {
+          sector_color[sector.Name] = palette[i];
+          i += 1;
+      });
+  
+      results.data._value.firms.forEach((firm: any) => {
+          let lobbyingTotal = firm.lobbyingRecordsAggregate.node.Amount.sum;
+          let sector = firm.categories[0].industry.sector.Name;
+          
+          graph.addNode(firm.Name, { 
+              x: Math.random() * 100,
+              y: Math.random() * 50,
+              size: Math.sqrt(lobbyingTotal) / 1000,
+              highlightLabel: firm.Name + '\nTotal Spent: $' + lobbyingTotal,
+              basicLabel: firm.Name,
+              label: firm.Name,
+              nodeType: "Firm",
+              status: "active",
+              sector: sector,
+              color: sector_color[sector]
+          });
+          
+          // Set up each employee and connect to firm
+          firm.board.forEach((employee: any) => {
+              graph.mergeNode(employee.Name, {
+                  x: Math.random() * 100,
+                  y: Math.random() * 50,
+                  size: 4,
+                  highlightLabel: employee.Name,
+                  basicLabel: employee.Name,
+                  label: employee.Name,
+                  nodeType: "Person",
+                  status: "active",
+                  color: "green"
+              });
+              graph.mergeEdge(firm.Name, employee.Name, { "status": "active", "size": 0.25 });
+          });
+      });
+      // Filtering out people w/ only connected to a single firm
+
+      // console.log("Filtering people that don't connect firms")
+      let empDropped: number = 0;
+      graph.forEachNode((node, attributes) => {
+          let degree = graph.degree(node);
+          if(attributes.nodeType == "Person") {
+              if(degree <= 1) {
+                  graph.dropNode(node)
+                  empDropped += 1;
+              } else {
+                  graph.setNodeAttribute(node, "size", degree)
+              }    
+          }
+      })
+      // console.log(empDropped + " employees dropped")
+      loading.value = false; // Toggle loading indicator
+  });
+}
+
+// Iteratively build graph until all records displayed
+while(offset.value < totalRecords.value.firmsAggregate.count) {
+  fetchAndBuildGraph(offset.value, limit.value);
+  offset.value += limit.value;
+}
 
  </script>
  
