@@ -7,7 +7,92 @@
     import Graph from "graphology"
     import FA2Layout from 'graphology-layout-forceatlas2/worker'
     import chroma from "chroma-js"
+    import type { Settings } from "sigma/settings";
+    import type { NodeDisplayData, PartialButFor, PlainObject } from "sigma/types";
+
+    const TEXT_COLOR = "#000000";
+
+    function drawRoundRect(
+        ctx: CanvasRenderingContext2D,
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        radius: number,
+    ): void {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
     
+    /**
+     * Custom hover renderer
+     */
+    function drawHover(context: CanvasRenderingContext2D, data: PlainObject, settings: PlainObject) {
+        const size = settings.labelSize;
+        const font = settings.labelFont;
+        const weight = settings.labelWeight;
+        const subLabelSize = size - 2;
+
+        const label = data.label;
+        const subLabel = data.extraDetails !== "unknown" ? data.extraDetails : "";
+        const sectorLabel = data.sector;
+
+        // Then we draw the label background
+        context.beginPath();
+        context.fillStyle = "#fff";
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 2;
+        context.shadowBlur = 8;
+        context.shadowColor = "#000";
+
+        context.font = `${weight} ${size}px ${font}`;
+        const labelWidth = context.measureText(label).width;
+        context.font = `${weight} ${subLabelSize}px ${font}`;
+        const subLabelWidth = subLabel ? context.measureText(subLabel).width : 0;
+        context.font = `${weight} ${subLabelSize}px ${font}`;
+        const sectorLabelWidth = sectorLabel ? context.measureText(sectorLabel).width : 0;
+
+        const textWidth = Math.max(labelWidth, subLabelWidth, sectorLabelWidth);
+
+        const x = Math.round(data.x);
+        const y = Math.round(data.y);
+        const w = Math.round(textWidth + size / 2 + data.size + 3);
+        const hLabel = Math.round(size / 2 + 4);
+        const hSubLabel = subLabel ? Math.round(subLabelSize / 2 + 9) : 0;
+        const hsectorLabel = Math.round(subLabelSize / 2 + 9);
+
+        drawRoundRect(context, x, y - hSubLabel - 12, w, hsectorLabel + hLabel + hSubLabel + 12, 5);
+        context.closePath();
+        context.fill();
+
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 0;
+        context.shadowBlur = 0;
+
+        // And finally we draw the labels
+        context.fillStyle = TEXT_COLOR;
+        context.font = `${weight} ${size}px ${font}`;
+        context.fillText(label, data.x + data.size + 3, data.y + size / 3);
+
+        if (subLabel) {
+            context.fillStyle = TEXT_COLOR;
+            context.font = `${weight} ${subLabelSize}px ${font}`;
+            context.fillText(subLabel, data.x + data.size + 3, data.y - (2 * size) / 3 - 2);
+        }
+
+        context.fillStyle = data.color;
+        context.font = `${weight} ${subLabelSize}px ${font}`;
+        context.fillText(sectorLabel, data.x + data.size + 3, data.y + size / 3 + 3 + subLabelSize);
+    }
 
     export default {
         props: {
@@ -37,14 +122,13 @@
                     gravity: 2,
                     adjustSizes: true,
                     barnesHutOptimize: true,
-                    // outboundAttractionDistribution: true,
                     barnesHutTheta: 2,
                     slowDown: 5,
                     scalingRatio: 5,
                 }
             });
 
-            // To start the layout
+            // Start the Force-Atlas Layout Process
             layout.start();
 
             // Render
@@ -58,15 +142,13 @@
                         ...data,
                         color: active ? color : chroma(color).alpha(0.3).hex(),
                         zIndex: active ? 1 : -1,
-                        label: active ? data.basicLabel : ''
+                        label: active ? data.label : ''
                     }
                 },
-                // nodeProgramClasses: {
-                //     nod
-                // }
+                hoverRenderer: drawHover
             });
-            renderer.setSetting("h")
 
+            // Specify active nodes whenever user hovers over one
             renderer.on("enterNode", ({ node }) => {
                 // Get current node and its neighbors
                 let activeNodes: any = {};
@@ -91,6 +173,7 @@
                 renderer.refresh();
             });
 
+            // Reset active nodes when user stops hovering over one
             renderer.on("leaveNode", ({ node }) => {
                 this.graph.forEachNode((n: string, attr: any) => {
                     this.graph.setNodeAttribute(n, "status", "active");
@@ -103,7 +186,7 @@
 
             setTimeout(function() {
                 layout.stop();
-            }, 15000);
+            }, 30000);
         }
     }
  </script>

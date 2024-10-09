@@ -27,19 +27,28 @@ import Graph from "graphology"
 // Graph loading and chunking properties
 const loading = ref(true);
 const offset  = ref(0);
-const limit   = ref(1000);
+const limit   = ref(500);
 
 // Graph object instantiation
 const graph = new Graph();
 let sector_color: any = {};
+var MIN_SPENT: number = 1000000.0;
 
 // Get total number of records in database
 const { data: totalRecords } = await useAsyncQuery(gql`
-  query {
-    firmsAggregate {
-      count
+  query QueriedFirmsCount($where: FirmWhere) {
+  firmsAggregate(where: $where) {
+    count
+  }
+}`, {
+  "where": {
+    "lobbyingRecordsAggregate": {
+      "node": {
+        "Amount_SUM_GT": MIN_SPENT
+      }
     }
-  }`);
+  }
+});
 
 
 // Async function to iteratively build Sigma graph
@@ -74,7 +83,6 @@ async function fetchAndBuildGraph(offset: number, limit: number) {
     }
   }`
 
-  var MIN_SPENT: number = 1000000.0;
   const dataVariables = {
     "offset": offset,
     "limit": limit,
@@ -119,8 +127,7 @@ async function fetchAndBuildGraph(offset: number, limit: number) {
               x: Math.random() * 100,
               y: Math.random() * 50,
               size: Math.sqrt(lobbyingTotal) / 1000,
-              highlightLabel: firm.Name + '\nTotal Spent: $' + lobbyingTotal,
-              basicLabel: firm.Name,
+              extraDetails: 'Total Spent: $' + lobbyingTotal,
               label: firm.Name,
               nodeType: "Firm",
               status: "active",
@@ -134,8 +141,7 @@ async function fetchAndBuildGraph(offset: number, limit: number) {
                   x: Math.random() * 100,
                   y: Math.random() * 50,
                   size: 4,
-                  highlightLabel: employee.Name,
-                  basicLabel: employee.Name,
+                  extraDetails: employee.Name,
                   label: employee.Name,
                   nodeType: "Person",
                   status: "active",
