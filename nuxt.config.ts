@@ -3,8 +3,10 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   ssr: false,
   components: true,
-  modules: ['@nuxtjs/apollo', '@nuxtjs/tailwindcss'],
-
+  modules: ['@nuxtjs/apollo', '@nuxtjs/tailwindcss', '@pinia/nuxt'],
+  alias: {
+    pinia: '/node_modules/@pinia/nuxt/node_modules/pinia/dist/pinia.mjs',
+  },
   apollo: { 
     clients: { 
       default: { 
@@ -12,10 +14,11 @@ export default defineNuxtConfig({
       } 
     }, 
   },
-
+  pinia: {
+    storesDirs: ["./stores/**"]
+  },
   build: {
     transpile: ['tslib']
   },
-
   compatibilityDate: '2024-09-08'
 })

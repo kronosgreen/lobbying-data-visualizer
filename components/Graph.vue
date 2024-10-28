@@ -1,184 +1,302 @@
-<template>
-  <div id="graph-render">
-    <div class="max-w-screen-xl grid grid-cols-6 gap-4 h-1/5 mx-5 px-5 my-5 py-2" >
-        <div class="col-span-2 relative mb-6">
-            <label for="default-range" class="block mb-2 text-sm font-medium text-gray-900">Minimum Total Spent</label>
-            <input id="default-range" type="range" min="0" max="30000000" step="10000" value="10000000" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700">
-            <span class="text-sm text-gray-500 dark:text-gray-400 absolute start-0 -bottom-6">Min ($0)</span>
-            <span class="text-sm text-gray-500 dark:text-gray-400 absolute end-0 -bottom-6">Max ($30000000)</span>
-        </div>
-
-        <div>
-
-        </div>
-
-        <button class="row-auto m-3 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full">
-            Refresh Query
-        </button>
-    </div>
-    <span v-if="loading" class="loader"></span>
-    <Sigma v-else :graph="graph" :sectorColors="sector_color" fallback="Loading..."/>
-  </div>
-</template>
-
 <script lang="ts" setup>
-import Graph from "graphology"
+import DirectedGraph from "graphology"
+import FA2Layout from 'graphology-layout-forceatlas2/worker'
 
 // Graph loading and chunking properties
-const loading = ref(true);
-const offset  = ref(0);
-const limit   = ref(500);
+const store = useGraphStateStore();
+const loading     = ref(true);
+const offset      = ref(0);
+const limit       = ref(2000);
 
 // Graph object instantiation
-const graph = new Graph();
-let sector_color: any = {};
-var MIN_SPENT: number = 1000000.0;
+const graph = new DirectedGraph();
 
-// Get total number of records in database
-const { data: totalRecords } = await useAsyncQuery(gql`
-  query QueriedFirmsCount($where: FirmWhere) {
-  firmsAggregate(where: $where) {
-    count
-  }
-}`, {
-  "where": {
-    "lobbyingRecordsAggregate": {
-      "node": {
-        "Amount_SUM_GT": MIN_SPENT
-      }
-    }
-  }
+// Number Formatter
+let nf = new Intl.NumberFormat('en-US');
+
+// Sector Colors
+const palette: string[] = [
+  "#fd7f6f",
+  "#7eb0d5",
+  "#b2e061",
+  "#bd7ebe",
+  "#ffb55a",
+  "#ffee65",
+  "#beb9db",
+  "#fdcce5",
+  "#8bd3c7",
+  '#ffffd1',
+  '#ff9cee',
+  '#dbffd6',
+  '#85e3ff',
+  '#bffcc6',
+  '#ace7ff'
+];
+
+// Getting Sectors
+const { data: sector_data } = await useAsyncQuery(gql`query { sectors { Name } }`);
+let sectors: object[] = sector_data._value.sectors;
+
+// Set sector colors
+let i = 0;
+const sector_color: any = {};
+sectors.forEach((sector: any) => {
+  sector_color[sector.Name] = palette[i];
+  i += 1;
 });
 
+// Query Parameters
+const min_spent   = ref(500000.0);
+const year        = ref(2012);
+
+// Main Query
+const dataQuery = gql`
+query GetTopFirms($year: Int, $minSpent: Float, $offset: Int, $limit: Int) {
+  TopSpendingFirms(year: $year, minSpent: $minSpent, options: {
+      offset: $offset,
+      limit: $limit
+  }) {
+    Name
+    totalLobbyingYear(year: $year)
+    issuesLobbied(year: $year)
+    sectors
+    parent {
+      Name
+    }
+    subsidiaries {
+      Name
+    }
+  }
+}`
 
 // Async function to iteratively build Sigma graph
 async function fetchAndBuildGraph(offset: number, limit: number) {
-  const dataQuery = gql`
-  query TopSpendingFirms($fw: FirmWhere, $offset: Int, $limit: Int) {
-    firms(where: $fw, options: {
-        offset: $offset,
-        limit: $limit
-      }) {
-      Name
-      lobbyingRecordsAggregate {
-        node {
-          Amount {
-            sum
-          }
-        }
-      }
-      categories {
-        industry {
-          sector {
-            Name
-          }
-        }
-      }
-      board {
-        Name
-      }
-    }
-    sectors {
-      Name
-    }
-  }`
-
   const dataVariables = {
     "offset": offset,
     "limit": limit,
-    "fw": {
-      "lobbyingRecordsAggregate": {
-        "node": {
-          "Amount_SUM_GT": MIN_SPENT
-        }
-      }
-    }
+    "year": Number(year.value),
+    "minSpent": Number(min_spent.value)
   }
   
   await useAsyncQuery(dataQuery, dataVariables).then((results: any) => {
-      let palette: string[] = [
-          "#fd7f6f",
-          "#7eb0d5",
-          "#b2e061",
-          "#bd7ebe",
-          "#ffb55a",
-          "#ffee65",
-          "#beb9db",
-          "#fdcce5",
-          "#8bd3c7",
-          '#ffffd1',
-          '#ff9cee',
-          '#dbffd6',
-          '#85e3ff',
-          '#bffcc6',
-          '#ace7ff'
-      ];
-      let i = 0;
-      results.data._value.sectors.forEach((sector: any) => {
-          sector_color[sector.Name] = palette[i];
-          i += 1;
-      });
-  
-      results.data._value.firms.forEach((firm: any) => {
-          let lobbyingTotal = firm.lobbyingRecordsAggregate.node.Amount.sum;
-          let sector = firm.categories[0].industry.sector.Name;
-          
+
+    let edgesLoaded = 0;
+    results.data._value.TopSpendingFirms.forEach((firm: any) => {
+        let sector = (firm.sectors.length > 1) ? "Misc Business" : firm.sectors[0];
+        
+        // Create Firm node
+        try {
           graph.addNode(firm.Name, { 
-              x: Math.random() * 100,
-              y: Math.random() * 50,
-              size: Math.sqrt(lobbyingTotal) / 1000,
-              extraDetails: 'Total Spent: $' + lobbyingTotal,
-              label: firm.Name,
-              nodeType: "Firm",
-              status: "active",
+            x: Math.random() * 100,
+            y: Math.random() * 50,
+            size: Math.sqrt(firm.totalLobbyingYear) / 160,
+            extraDetails: 'Total Spent: $' + nf.format(firm.totalLobbyingYear),
+            label: firm.Name,
+            nodeType: "Firm",
+            status: "active",
+            sector: sector,
+            color: sector_color[sector]
+          });
+        } catch(error: any) {
+          // Node already inserted as parent or subsidiary
+          if(error.name == "UsageGraphError") {
+            graph.mergeNodeAttributes(firm.Name, {
+              extraDetails: 'Total Spent: $' + nf.format(firm.totalLobbyingYear),
               sector: sector,
               color: sector_color[sector]
-          });
-          
-          // Set up each employee and connect to firm
-          firm.board.forEach((employee: any) => {
-              graph.mergeNode(employee.Name, {
-                  x: Math.random() * 100,
-                  y: Math.random() * 50,
-                  size: 4,
-                  extraDetails: employee.Name,
-                  label: employee.Name,
-                  nodeType: "Person",
-                  status: "active",
-                  color: "green"
-              });
-              graph.mergeEdge(firm.Name, employee.Name, { "status": "active", "size": 0.25 });
-          });
-      });
-      // Filtering out people w/ only connected to a single firm
-
-      // console.log("Filtering people that don't connect firms")
-      let empDropped: number = 0;
-      graph.forEachNode((node, attributes) => {
-          let degree = graph.degree(node);
-          if(attributes.nodeType == "Person") {
-              if(degree <= 1) {
-                  graph.dropNode(node)
-                  empDropped += 1;
-              } else {
-                  graph.setNodeAttribute(node, "size", degree)
-              }    
+            });
+            graph.setNodeAttribute(firm.Name, 'size', Math.sqrt(firm.totalLobbyingYear) / 160);
           }
-      })
-      // console.log(empDropped + " employees dropped")
-      loading.value = false; // Toggle loading indicator
+        }
+
+        // Connect to parent company if it has one
+        if(firm.parent) {
+          if(!graph.hasNode(firm.parent.Name)) {
+            graph.addNode(firm.parent.Name, {
+              x: Math.random() * 100,
+              y: Math.random() * 50,
+              size: 5,
+              label: firm.parent.Name,
+              nodeType: "Firm",
+              status: "active",
+            });
+          }
+          graph.addDirectedEdge(firm.parent.Name, firm.Name, { "relType": "subsidiary" });
+          edgesLoaded++;
+        }
+
+        // Connect to issues
+        firm.issuesLobbied.forEach((issue: any) => {
+          graph.addDirectedEdge(firm.Name, issue, { "relType": "lobbiedOn" })
+          edgesLoaded++;
+        })
+        
+        // Set up each employee and connect to firm
+        // firm.board.forEach((employee: any) => {
+        //     graph.mergeNode(employee.Name, {
+        //         x: Math.random() * 100,
+        //         y: Math.random() * 50,
+        //         size: 4,
+        //         extraDetails: employee.Name,
+        //         label: employee.Name,
+        //         nodeType: "Person",
+        //         status: "active",
+        //         color: "green"
+        //     });
+        //     graph.mergeEdge(firm.Name, employee.Name, { "status": "active", "size": 0.25 });
+        // });
+    });
+
+    store.edgesLoaded += edgesLoaded;
+
+    // Filtering out people w/ only connected to a single firm
+    // let empDropped: number = 0;
+    // graph.forEachNode((node, attributes) => {
+    //     let degree = graph.degree(node);
+    //     if(attributes.nodeType == "Person") {
+    //         if(degree <= 1) {
+    //             graph.dropNode(node)
+    //             empDropped += 1;
+    //         } else {
+    //             graph.setNodeAttribute(node, "size", degree)
+    //         }    
+    //     }
+    // })
+    loading.value = false; // Toggle loading indicator
   });
 }
 
-// Iteratively build graph until all records displayed
-while(offset.value < totalRecords.value.firmsAggregate.count) {
-  fetchAndBuildGraph(offset.value, limit.value);
-  offset.value += limit.value;
+async function loadData() {
+    loading.value = true;
+    store.$patch({ loading: true });
+
+    // Restart Graph
+    store.nodesLoaded = 0;
+    store.edgesLoaded = 0;
+    offset.value = 0;
+    graph.clear();
+
+    // Getting Issues
+    const { data: issue_data } = await useAsyncQuery(gql`query { issues { Issue } }`);
+    let issues: object[] = issue_data._value.issues;
+
+    issues.forEach((issue: any) => {
+      graph.mergeNode(issue.Issue, {
+        x: Math.random() * 100,
+        y: Math.random() * 50,
+        size: 10,
+        label: issue.Issue,
+        nodeType: "Issue",
+        status: "active",
+        color: "red"
+      })
+    });
+
+    // Get number of records from parameters
+    let { data : count_data } = await useAsyncQuery(
+      gql`query TopFirmsCount($year: Int, $minSpent: Float) { TopFirmsCount(year: $year, minSpent: $minSpent) }`,
+      { "year": Number(year.value), "minSpent": Number(min_spent.value)}
+    );
+    let TopFirmsCount: number = count_data._value.TopFirmsCount;
+
+    // Iteratively build graph until all records displayed
+    while(offset.value < TopFirmsCount) {
+      await fetchAndBuildGraph(offset.value, limit.value);
+      offset.value += limit.value;
+      store.nodesLoaded = Math.min(TopFirmsCount, store.nodesLoaded + limit.value);
+    }
+
+    // Update Issues
+    issues.forEach((issue: any) => {
+      graph.setNodeAttribute(issue.Issue, "size", Math.sqrt(graph.inDegree(issue.Issue)));
+    });
+
+    // Organize graph according to layout
+    if(import.meta.client) {
+      // Create Layout
+      const layout = new FA2Layout(graph, {
+        settings: {
+            gravity: 2,
+            adjustSizes: true,
+            barnesHutOptimize: true,
+            barnesHutTheta: 2,
+            slowDown: 5,
+            scalingRatio: 5,
+        }
+      });
+      // Start the Force-Atlas Layout Process
+      layout.start();
+
+      // Stop layout after 30 seconds
+      setTimeout(function() {
+          layout.stop();
+      }, 5000);
+    }
+
+    // Finished Loading
+    loading.value = false;
+    store.$patch({ loading: false });
 }
 
- </script>
+// Initial load
+await loadData();
+
+</script>
+
+<template>
+  <div id="graph-render">
+    <div id="query_param_bar" class="max-w-screen-xl grid grid-cols-12 gap-4 h-1/4 mx-5 px-5 my-5 py-2" >
+        <div class="col-span-3 relative mb-6">
+            <label for="min-spent" class="block mb-2 text-sm font-medium text-gray-900">Minimum Spent on Lobbying: ${{ min_spent }}</label>
+            <input id="min-spent" v-model="min_spent" type="range" min="0" max="1000000" step="10000" 
+              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700">
+            <span class="text-sm text-gray-500 dark:text-gray-400 absolute start-0 -bottom-6">Min ($0)</span>
+            <span class="text-sm text-gray-500 dark:text-gray-400 absolute end-0 -bottom-6">Max ($1,000,000)</span>
+        </div>
+
+        <div class="col-span-3 relative mb-6">
+            <label for="year" class="block mb-2 text-sm font-medium text-gray-900">Year: {{ year }}</label>
+            <input id="year" v-model="year" type="range" min="1998" max="2023" step="1" 
+              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700">
+            <span class="text-sm text-gray-500 dark:text-gray-400 absolute start-0 -bottom-6">1998</span>
+            <span class="text-sm text-gray-500 dark:text-gray-400 absolute end-0 -bottom-6">2023</span>
+        </div>
+
+        <button class="row-auto col-span-2 m-3 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full"
+          @click="loadData">
+            Refresh Query
+        </button>
+    </div>
+    <div class="max-w-screen-xl grid grid-cols-4 gap-4 h-1/5 m-5 px-5 py-2 space-x-10">
+      <div class="col-span-1 relative rounded border border-gray-400 p-4">
+        <p class="text-xl font-bold my-2">Query Data</p>
+        <div class="columns-1">
+          <span class="flex my-2">Nodes Loaded: {{ store.nodesLoaded }}</span>
+          <span class="flex my-2">Edges Loaded: {{ store.edgesLoaded }}</span>
+        </div>
+        <p class="text-xl font-bold my-2">Legend</p>
+        <p class="text-lg font-bold my-2">Nodes</p>
+        <div class="columns-2 my-3 items-center align-middle flex">
+          <span class="inline-block w-8 h-8 rounded-full" style="background-color: red;"></span>
+          <span class="flex align-middle mx-3">Issues</span>
+        </div>
+        <p class="text-lg font-bold my-2">Firms: by Sector</p>
+        <div class="columns-2 my-3 items-center align-middle flex" v-for="([key, value], index) in Object.entries(sector_color)" :key="key">
+          <span class="inline-block w-8 h-8 rounded-full" :style="{backgroundColor:String(value)}"></span>
+          <span class="flex align-middle mx-3">{{ key }}</span>
+        </div>
+      </div>
+      <div class="col-span-3 relative">
+        <span v-if="loading" class="loader"></span>
+        <Sigma v-else :graph="graph" :sector_color="sector_color" fallback="Loading..."/>
+      </div>
+    </div>
+  </div>
+</template>
  
- <style>
+<style>
+
+/* Spinning Loader Icon */
 .loader {
   width: 48px;
   height: 48px;
@@ -212,5 +330,4 @@ while(offset.value < totalRecords.value.firmsAggregate.count) {
     50%  {clip-path:polygon(50% 50%,0 0,100% 0,100% 0,100% 0,100% 0)}
     75%, 100%  {clip-path:polygon(50% 50%,0 0,100% 0,100% 100%,100% 100%,100% 100%)}
 }
-
 </style>
