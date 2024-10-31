@@ -1,6 +1,8 @@
 <script lang="ts" setup>
 import DirectedGraph from "graphology"
 import FA2Layout from 'graphology-layout-forceatlas2/worker'
+import forceAtlas2 from 'graphology-layout-forceatlas2';
+import NoverlapLayout from 'graphology-layout-noverlap/worker';
 
 // Graph loading and chunking properties
 const store = useGraphStateStore();
@@ -59,6 +61,13 @@ query GetTopFirms($year: Int, $minSpent: Float, $offset: Int, $limit: Int) {
     Name
     totalLobbyingYear(year: $year)
     issuesLobbied(year: $year)
+    agenciesLobbied(year: $year)
+    performanceOnYearAndPrev(year: $year) {
+      TickerSymbol
+      Year
+      EBITDA
+      MarketValue
+    }
     sectors
     parent {
       Name
@@ -71,16 +80,17 @@ query GetTopFirms($year: Int, $minSpent: Float, $offset: Int, $limit: Int) {
 
 // Async function to iteratively build Sigma graph
 async function fetchAndBuildGraph(offset: number, limit: number) {
+  let yearQueried = Number(year.value);
+
   const dataVariables = {
     "offset": offset,
     "limit": limit,
-    "year": Number(year.value),
+    "year": yearQueried,
     "minSpent": Number(min_spent.value)
   }
   
   await useAsyncQuery(dataQuery, dataVariables).then((results: any) => {
 
-    let edgesLoaded = 0;
     results.data._value.TopSpendingFirms.forEach((firm: any) => {
         let sector = (firm.sectors.length > 1) ? "Misc Business" : firm.sectors[0];
         
@@ -91,6 +101,7 @@ async function fetchAndBuildGraph(offset: number, limit: number) {
             y: Math.random() * 50,
             size: Math.sqrt(firm.totalLobbyingYear) / 160,
             extraDetails: 'Total Spent: $' + nf.format(firm.totalLobbyingYear),
+            fundamentals: false,
             label: firm.Name,
             nodeType: "Firm",
             status: "active",
@@ -109,59 +120,54 @@ async function fetchAndBuildGraph(offset: number, limit: number) {
           }
         }
 
+        // Add performance metrics from annual fundamentals
+        if(firm.performanceOnYearAndPrev.length > 0) {
+          // Got both the queried year and previous
+          if(firm.performanceOnYearAndPrev.length == 2) {
+            graph.setNodeAttribute(firm.Name, 'fundamentals', true);
+
+            let currentYearInd = (firm.performanceOnYearAndPrev[0].Year == yearQueried) ? 0 : 1;
+            let ebitda = firm.performanceOnYearAndPrev[currentYearInd].EBITDA;
+            let marketValue = firm.performanceOnYearAndPrev[currentYearInd].MarketValue;
+            let prevYearInd = (currentYearInd == 0) ? 1 : 0;
+            graph.mergeNodeAttributes(firm.Name, {
+              ebitda: ebitda,
+              marketValue: marketValue,
+              ticker: firm.performanceOnYearAndPrev[0].TickerSymbol,
+              ebitdaChange: ((ebitda / firm.performanceOnYearAndPrev[prevYearInd].EBITDA) - 1) * 100,
+              marketValueChange: ((marketValue / firm.performanceOnYearAndPrev[prevYearInd].MarketValue) - 1) * 100,
+            });
+          }
+          // Only got one year
+          if(firm.performanceOnYearAndPrev.length == 1 && firm.performanceOnYearAndPrev[0].Year == yearQueried) {
+            graph.mergeNodeAttributes(firm.Name, {
+              ebitda: firm.performanceOnYearAndPrev[0].EBITDA,
+              marketValue: firm.performanceOnYearAndPrev[0].MarketValue,
+              ticker: firm.performanceOnYearAndPrev[0].TickerSymbol,
+            });
+          }
+        }
+
         // Connect to parent company if it has one
         if(firm.parent) {
           if(!graph.hasNode(firm.parent.Name)) {
-            graph.addNode(firm.parent.Name, {
-              x: Math.random() * 100,
-              y: Math.random() * 50,
-              size: 5,
-              label: firm.parent.Name,
-              nodeType: "Firm",
-              status: "active",
-            });
+            graph.setNodeAttribute(firm.Name, "parentCompany", firm.parent.Name);
+          } else {
+            graph.addDirectedEdge(firm.parent.Name, firm.Name, { "relType": "subsidiary" });
           }
-          graph.addDirectedEdge(firm.parent.Name, firm.Name, { "relType": "subsidiary" });
-          edgesLoaded++;
         }
 
         // Connect to issues
         firm.issuesLobbied.forEach((issue: any) => {
           graph.addDirectedEdge(firm.Name, issue, { "relType": "lobbiedOn" })
-          edgesLoaded++;
+        });
+
+        // Connect to agencies
+        firm.agenciesLobbied.forEach((agency: any) => {
+          graph.addDirectedEdge(firm.Name, agency, { "relType": "lobbiedAgency" })
         })
-        
-        // Set up each employee and connect to firm
-        // firm.board.forEach((employee: any) => {
-        //     graph.mergeNode(employee.Name, {
-        //         x: Math.random() * 100,
-        //         y: Math.random() * 50,
-        //         size: 4,
-        //         extraDetails: employee.Name,
-        //         label: employee.Name,
-        //         nodeType: "Person",
-        //         status: "active",
-        //         color: "green"
-        //     });
-        //     graph.mergeEdge(firm.Name, employee.Name, { "status": "active", "size": 0.25 });
-        // });
     });
 
-    store.edgesLoaded += edgesLoaded;
-
-    // Filtering out people w/ only connected to a single firm
-    // let empDropped: number = 0;
-    // graph.forEachNode((node, attributes) => {
-    //     let degree = graph.degree(node);
-    //     if(attributes.nodeType == "Person") {
-    //         if(degree <= 1) {
-    //             graph.dropNode(node)
-    //             empDropped += 1;
-    //         } else {
-    //             graph.setNodeAttribute(node, "size", degree)
-    //         }    
-    //     }
-    // })
     loading.value = false; // Toggle loading indicator
   });
 }
@@ -192,6 +198,23 @@ async function loadData() {
       })
     });
 
+    // Getting Agencies
+    const { data: agency_data } = await useAsyncQuery(gql`query { agencies { Name } }`);
+    let agencies: String[] = agency_data._value.agencies.map((x: any) => x.Name);
+    let agenciesUnique = [...new Set(agencies)]
+
+    agenciesUnique.forEach((agency: String) => {
+      graph.addNode(agency, {
+        x: Math.random() * 100,
+        y: Math.random() * 50,
+        size: 10,
+        label: agency,
+        nodeType: "Agency",
+        status: "active",
+        color: "brown"
+      })
+    });
+
     // Get number of records from parameters
     let { data : count_data } = await useAsyncQuery(
       gql`query TopFirmsCount($year: Int, $minSpent: Float) { TopFirmsCount(year: $year, minSpent: $minSpent) }`,
@@ -203,49 +226,58 @@ async function loadData() {
     while(offset.value < TopFirmsCount) {
       await fetchAndBuildGraph(offset.value, limit.value);
       offset.value += limit.value;
-      store.nodesLoaded = Math.min(TopFirmsCount, store.nodesLoaded + limit.value);
+      store.nodesLoaded = graph.order;
+      store.edgesLoaded = graph.size;
     }
 
-    // Update Issues
+    // Update Node Sizes
     issues.forEach((issue: any) => {
-      graph.setNodeAttribute(issue.Issue, "size", Math.sqrt(graph.inDegree(issue.Issue)));
+      graph.setNodeAttribute( issue.Issue, "size", Math.sqrt(graph.inDegree(issue.Issue)) );
     });
 
+    agenciesUnique.forEach((agency: String) => {
+      let lobbiedByCount = graph.inDegree(agency);
+      if(lobbiedByCount < 1) {
+        // Drop agencies that weren't lobbied
+        graph.dropNode( agency );
+      } else {
+        graph.setNodeAttribute( agency, "size", Math.sqrt(lobbiedByCount) );
+      }
+    })
+
     // Organize graph according to layout
-    if(import.meta.client) {
-      // Create Layout
-      const layout = new FA2Layout(graph, {
-        settings: {
-            gravity: 2,
-            adjustSizes: true,
-            barnesHutOptimize: true,
-            barnesHutTheta: 2,
-            slowDown: 5,
-            scalingRatio: 5,
-        }
-      });
-      // Start the Force-Atlas Layout Process
-      layout.start();
+    const layout = new FA2Layout(graph, {
+      settings: {
+          gravity: 1,
+          adjustSizes: true,
+          barnesHutOptimize: true,
+          barnesHutTheta: 0.5,
+          slowDown: 2,
+          scalingRatio: 10,
+          outboundAttractionDistribution: true
+      }
+    });
+    
+    // Start the Force-Atlas Layout Process
+    layout.start();
 
-      // Stop layout after 30 seconds
-      setTimeout(function() {
-          layout.stop();
-      }, 5000);
-    }
+    // Stop layout after 30 seconds
+    setTimeout(function() {
+        layout.stop();
+    }, 5000);
 
-    // Finished Loading
-    loading.value = false;
+    // Finished Loading Entire Graph
     store.$patch({ loading: false });
 }
 
 // Initial load
-await loadData();
+loadData();
 
 </script>
 
 <template>
   <div id="graph-render">
-    <div id="query_param_bar" class="max-w-screen-xl grid grid-cols-12 gap-4 h-1/4 mx-5 px-5 my-5 py-2" >
+    <div class="max-w-screen-xl grid grid-cols-12 gap-4 h-1/4 mx-5 px-5 my-5 py-2" >
         <div class="col-span-3 relative mb-6">
             <label for="min-spent" class="block mb-2 text-sm font-medium text-gray-900">Minimum Spent on Lobbying: ${{ min_spent }}</label>
             <input id="min-spent" v-model="min_spent" type="range" min="0" max="1000000" step="10000" 
@@ -268,6 +300,7 @@ await loadData();
         </button>
     </div>
     <div class="max-w-screen-xl grid grid-cols-4 gap-4 h-1/5 m-5 px-5 py-2 space-x-10">
+      <!-- Legend -->
       <div class="col-span-1 relative rounded border border-gray-400 p-4">
         <p class="text-xl font-bold my-2">Query Data</p>
         <div class="columns-1">
@@ -280,12 +313,19 @@ await loadData();
           <span class="inline-block w-8 h-8 rounded-full" style="background-color: red;"></span>
           <span class="flex align-middle mx-3">Issues</span>
         </div>
+        <div class="columns-2 my-3 items-center align-middle flex">
+          <span class="inline-block w-8 h-8 rounded-full" style="background-color: brown;"></span>
+          <span class="flex align-middle mx-3">Agency</span>
+        </div>
         <p class="text-lg font-bold my-2">Firms: by Sector</p>
-        <div class="columns-2 my-3 items-center align-middle flex" v-for="([key, value], index) in Object.entries(sector_color)" :key="key">
-          <span class="inline-block w-8 h-8 rounded-full" :style="{backgroundColor:String(value)}"></span>
-          <span class="flex align-middle mx-3">{{ key }}</span>
+        <div class="overflow-auto border border-gray-400 px-4 rounded" style="height: 250px;">
+          <div class="columns-2 my-3 items-center align-middle flex" v-for="([key, value], index) in Object.entries(sector_color)" :key="key">
+            <span class="inline-block w-8 h-8 rounded-full" :style="{backgroundColor:String(value)}"></span>
+            <span class="flex align-middle mx-3">{{ key }}</span>
+          </div>
         </div>
       </div>
+      <!-- Graph -->
       <div class="col-span-3 relative">
         <span v-if="loading" class="loader"></span>
         <Sigma v-else :graph="graph" :sector_color="sector_color" fallback="Loading..."/>

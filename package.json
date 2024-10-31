@@ -12,7 +12,7 @@
   "devDependencies": {
     "@nuxt/devtools": "latest",
     "@nuxtjs/apollo": "^5.0.0-alpha.7",
-    "@nuxtjs/tailwindcss": "^6.12.1",
+    "@nuxtjs/tailwindcss": "^6.12.2",
     "@pinia/nuxt": "^0.5.5",
     "@types/chroma-js": "^2.4.4",
     "nuxt": "^3.8.0",
@@ -25,7 +25,9 @@
     "@vue/apollo-composable": "^4.2.1",
     "chroma-js": "^3.1.1",
     "graphology": "^0.25.4",
+    "graphology-communities-louvain": "^2.0.1",
     "graphology-layout-forceatlas2": "^0.10.1",
+    "graphology-layout-noverlap": "^0.4.2",
     "graphology-metrics": "^2.3.1",
     "react": "^18.2.0",
     "sigma": "^3.0.0-alpha3",

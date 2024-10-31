@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import Sigma from "sigma"
 import DirectedGraph from "graphology"
-import chroma from "chroma-js"
 import { drawHover } from "../assets/ts/drawUtils"
 </script>
 
@@ -22,13 +21,14 @@ export default {
         }
     },
     mounted() {
-        
+
         // Define colors for node types
         const colors: any = {
             "Industry": "#2a138e",
             "Firm": "#961919",
             "Person": "#459b1d",
-            "Issue": "red"
+            "Issue": "red",
+            "Agency": "brown"
         };
 
         // Rendering Sigma.js
@@ -37,11 +37,13 @@ export default {
             maxCameraRatio: 1,
             zIndex: true,
             nodeReducer: (node, data) => {
-                let color = data.nodeType == "Firm" ? (data.sector ? this.sector_color[data.sector] : "gray") : colors[data.nodeType];
+                let color = data.nodeType == "Firm" ? 
+                    (data.sector ? this.sector_color[data.sector] : "gray") : 
+                        colors[data.nodeType];
                 let active =  data.status == "active";
                 return {
                     ...data,
-                    color: active ? color : chroma(color).alpha(0.3).hex(),
+                    color: active ? color : "rgba(60, 60, 60, 0.3)",
                     zIndex: active ? 1 : -1,
                     label: active ? data.label : ''
                 }
@@ -50,6 +52,7 @@ export default {
         });
 
         // Specify active nodes whenever user hovers over one
+        const noConnect = ["Issue", "Agency"]
         renderer.on("enterNode", ({ node }) => {
             // Get current node and its neighbors
             let activeNodes: any = {};
@@ -58,7 +61,9 @@ export default {
             this.graph.neighbors(node).forEach((neighbor: string) => {
                 activeNodes[neighbor] = true;
                 activeEdges[this.graph.edge(node, neighbor) ?? 'undefined'] = true;
-                if(this.graph.getNodeAttribute(neighbor, "nodeType") != "Issue") { 
+                activeEdges[this.graph.edge(neighbor, node) ?? 'undefined'] = true;
+                if( !noConnect.includes(this.graph.getNodeAttribute(neighbor, "nodeType")) && 
+                    !noConnect.includes(this.graph.getNodeAttribute(node, "nodeType")) ) { 
                     this.graph.neighbors(neighbor).forEach((neighborSecond: string) => {
                         // Make sure second degree edges get drawn
                         activeEdges[this.graph.edge(neighbor, neighborSecond) ?? 'undefined'] = true;
